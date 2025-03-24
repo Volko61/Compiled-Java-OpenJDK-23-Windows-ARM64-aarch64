@@ -28,18 +28,25 @@ jobs:
       run: |
         git clone https://git.openjdk.org/jdk.git
         cd jdk
-        # Get the latest stable release tag (e.g., jdk-24+36)
+        # Get the latest stable release tag (e.g., jdk-24+36), filtering for version 23+
         $tags = git tag --list 'jdk-*'
-        $stableTags = $tags | Where-Object { $_ -match 'jdk-(\d+)\+(\d+)' }
+        $stableTags = $tags | Where-Object { $_ -match 'jdk-(\d+)\+(\d+)' -and [int]$matches[1] -ge 23 }
         $latestTag = $stableTags | Sort-Object -Descending { [version]($matches[1] + '.' + $matches[2]) } | Select-Object -First 1
+        if (-not $latestTag) {
+          Write-Error "No stable tag found for OpenJDK 23 or later"
+          exit 1
+        }
         git checkout $latestTag
-        # Extract version number (e.g., 24)
         $version = $latestTag -replace 'jdk-(\d+).*', '$1'
         echo "VERSION=$version" >> $env:GITHUB_ENV
 
     - name: Determine Boot JDK version
       run: |
         $bootJdkVersion = [int]$env:VERSION - 1
+        if ([int]$bootJdkVersion -lt 23) {
+          Write-Error "Boot JDK version ($bootJdkVersion) is less than 23, which is not supported"
+          exit 1
+        }
         echo "BOOT_JDK_VERSION=$bootJdkVersion" >> $env:GITHUB_ENV
 
     - name: Get Boot JDK download link
@@ -47,7 +54,7 @@ jobs:
         $downloadPage = Invoke-WebRequest -Uri "https://jdk.java.net/$env:BOOT_JDK_VERSION/"
         $link = $downloadPage.Links | Where-Object { $_.href -like "*openjdk-$env:BOOT_JDK_VERSION_windows-x64_bin.zip" } | Select-Object -First 1
         if (-not $link) {
-          Write-Error "Boot JDK URL not found for version $env:BOOT_JDK_VERSION"
+          Write-Error "Boot JDK URL not found for version $env:BOOT_JDK_VERSION on jdk.java.net/$env:BOOT_JDK_VERSION/"
           exit 1
         }
         $bootJdkUrl = $link.href
