@@ -3,7 +3,7 @@ name: Build OpenJDK for Windows ARM64
 on:
   schedule:
     - cron: '0 0 * * 0'  # Run weekly on Sunday at midnight UTC
-  workflow_dispatch:  # Allow manual triggering
+  workflow_dispatch:    # Allow manual triggering
 
 jobs:
   build:
@@ -24,19 +24,39 @@ jobs:
         Invoke-WebRequest -Uri "https://aka.ms/vs/17/release/vs_buildtools.exe" -OutFile "vs_buildtools.exe"
         Start-Process -Wait -FilePath "vs_buildtools.exe" -ArgumentList "--quiet --add Microsoft.VisualStudio.Workload.VCTools --add Microsoft.VisualStudio.Component.VC.Tools.ARM64 --add Microsoft.VisualStudio.Component.VC.CMake.Project --includeRecommended"
 
-    - name: Set up Boot JDK
-      run: |
-        # Download OpenJDK 24 for Windows x64 as the Boot JDK
-        Invoke-WebRequest -Uri "https://download.java.net/java/GA/jdk24/36/jdk-24_windows-x64_bin.zip" -OutFile "jdk-24.zip"
-        Expand-Archive -Path "jdk-24.zip" -DestinationPath "C:\Program Files (Arm)\Microsoft\jdk-24"
-
     - name: Clone OpenJDK repository
       run: |
         git clone https://git.openjdk.org/jdk.git
         cd jdk
-        # Get the latest stable release tag (e.g., jdk-23, jdk-24)
-        $latest_tag = (git tag --list 'jdk-*' | Sort-Object -Descending { [version]($_ -replace 'jdk-', '') } | Select-Object -First 1)
-        git checkout $latest_tag
+        # Get the latest stable release tag (e.g., jdk-24+36)
+        $tags = git tag --list 'jdk-*'
+        $stableTags = $tags | Where-Object { $_ -match 'jdk-(\d+)\+(\d+)' }
+        $latestTag = $stableTags | Sort-Object -Descending { [version]($matches[1] + '.' + $matches[2]) } | Select-Object -First 1
+        git checkout $latestTag
+        # Extract version number (e.g., 24)
+        $version = $latestTag -replace 'jdk-(\d+).*', '$1'
+        echo "VERSION=$version" >> $env:GITHUB_ENV
+
+    - name: Determine Boot JDK version
+      run: |
+        $bootJdkVersion = [int]$env:VERSION - 1
+        echo "BOOT_JDK_VERSION=$bootJdkVersion" >> $env:GITHUB_ENV
+
+    - name: Get Boot JDK download link
+      run: |
+        $downloadPage = Invoke-WebRequest -Uri "https://jdk.java.net/$env:BOOT_JDK_VERSION/"
+        $link = $downloadPage.Links | Where-Object { $_.href -like "*openjdk-$env:BOOT_JDK_VERSION_windows-x64_bin.zip" } | Select-Object -First 1
+        if (-not $link) {
+          Write-Error "Boot JDK URL not found for version $env:BOOT_JDK_VERSION"
+          exit 1
+        }
+        $bootJdkUrl = $link.href
+        echo "BOOT_JDK_URL=$bootJdkUrl" >> $env:GITHUB_ENV
+
+    - name: Download Boot JDK
+      run: |
+        Invoke-WebRequest -Uri "$env:BOOT_JDK_URL" -OutFile "jdk-$env:BOOT_JDK_VERSION.zip"
+        Expand-Archive -Path "jdk-$env:BOOT_JDK_VERSION.zip" -DestinationPath "C:\Program Files (Arm)\Microsoft\jdk-$env:BOOT_JDK_VERSION"
 
     - name: Configure Visual Studio environment for ARM64
       run: |
@@ -47,7 +67,7 @@ jobs:
       shell: bash
       run: |
         cd jdk
-        ./configure --with-boot-jdk="/cygdrive/c/Program Files (Arm)/Microsoft/jdk-24" --openjdk-target=aarch64-w64-mingw32
+        ./configure --with-boot-jdk="/cygdrive/c/Program Files (Arm)/Microsoft/jdk-$env:BOOT_JDK_VERSION" --openjdk-target=aarch64-w64-mingw32
 
     - name: Build OpenJDK
       run: |
@@ -57,5 +77,5 @@ jobs:
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
-        name: openjdk-windows-arm64
+        name: openjdk-${{ env.VERSION }}-windows-arm64
         path: jdk/build/windows-aarch64-server-release/images/jdk
