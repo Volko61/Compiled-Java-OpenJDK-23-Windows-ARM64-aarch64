@@ -20,7 +20,6 @@ jobs:
 
     - name: Install Visual Studio with ARM64 tools
       run: |
-        # Download and install Visual Studio Build Tools with ARM64 support
         Invoke-WebRequest -Uri "https://aka.ms/vs/17/release/vs_buildtools.exe" -OutFile "vs_buildtools.exe"
         Start-Process -Wait -FilePath "vs_buildtools.exe" -ArgumentList "--quiet --add Microsoft.VisualStudio.Workload.VCTools --add Microsoft.VisualStudio.Component.VC.Tools.ARM64 --add Microsoft.VisualStudio.Component.VC.CMake.Project --includeRecommended"
 
@@ -28,12 +27,11 @@ jobs:
       run: |
         git clone https://git.openjdk.org/jdk.git
         cd jdk
-        # Get the latest stable release tag (e.g., jdk-24+36), filtering for version 24+
         $tags = git tag --list 'jdk-*'
-        $stableTags = $tags | Where-Object { $_ -match 'jdk-(\d+)\+(\d+)' -and [int]$matches[1] -ge 24 }
+        $stableTags = $tags | Where-Object { $_ -match 'jdk-(\d+)\+(\d+)' -and [int]$matches[1] -ge 23 }
         $latestTag = $stableTags | Sort-Object -Descending { [version]($matches[1] + '.' + $matches[2]) } | Select-Object -First 1
         if (-not $latestTag) {
-          Write-Error "No stable tag found for OpenJDK 24 or later"
+          Write-Error "No stable tag found for OpenJDK 23 or later"
           exit 1
         }
         git checkout $latestTag
@@ -43,8 +41,8 @@ jobs:
     - name: Determine Boot JDK version
       run: |
         $bootJdkVersion = [int]$env:VERSION - 1
-        if ([int]$bootJdkVersion -lt 23) {
-          Write-Error "Boot JDK version ($bootJdkVersion) is less than 23, which is not supported"
+        if ([int]$bootJdkVersion -lt 22) {
+          Write-Error "Boot JDK version ($bootJdkVersion) is less than 22, which is not supported"
           exit 1
         }
         echo "BOOT_JDK_VERSION=$bootJdkVersion" >> $env:GITHUB_ENV
@@ -52,9 +50,10 @@ jobs:
     - name: Get Boot JDK download link
       run: |
         $downloadPage = Invoke-WebRequest -Uri "https://jdk.java.net/$env:BOOT_JDK_VERSION/"
-        $link = $downloadPage.Links | Where-Object { $_.href -like "*openjdk-$env:BOOT_JDK_VERSION_windows-x64_bin.zip" } | Select-Object -First 1
+        $downloadPage.Links | ForEach-Object { Write-Output "Found link: $($_.href)" }
+        $link = $downloadPage.Links | Where-Object { $_.href -like "*jdk-$env:BOOT_JDK_VERSION*_windows-x64_bin.zip" -or $_.href -like "*openjdk-$env:BOOT_JDK_VERSION*_windows-x64_bin.zip" } | Select-Object -First 1
         if (-not $link) {
-          Write-Error "Boot JDK URL not found for version $env:BOOT_JDK_VERSION on jdk.java.net/$env:BOOT_JDK_VERSION/"
+          Write-Error "Boot JDK URL not found for version $env:BOOT_JDK_VERSION on jdk.java.net/$env:BOOT_JDK_VERSION/. Check the logged links above for available options."
           exit 1
         }
         $bootJdkUrl = $link.href
@@ -67,7 +66,6 @@ jobs:
 
     - name: Configure Visual Studio environment for ARM64
       run: |
-        # Set up the ARM64 cross-compilation environment
         cmd /c "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvarsall.bat" x64_arm64
 
     - name: Configure OpenJDK build
