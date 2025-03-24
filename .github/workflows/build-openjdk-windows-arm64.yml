@@ -1,106 +1,61 @@
 name: Build OpenJDK for Windows ARM64
 
-# Triggers the workflow weekly or manually
 on:
   schedule:
-    - cron: '0 0 * * 0'  # Runs every Sunday at midnight UTC
-  workflow_dispatch:     # Allows manual triggering
+    - cron: '0 0 * * 0'  # Run weekly on Sunday at midnight UTC
+  workflow_dispatch:  # Allow manual triggering
 
 jobs:
   build:
-    # Use a Windows ARM64 runner (assumes availability as of March 2025)
-    runs-on: windows-arm64
+    runs-on: windows-2022  # Windows x64 runner for cross-compilation
 
     steps:
-      # Check out the repository (optional, if storing state or scripts)
-      - name: Checkout Repository
-        uses: actions/checkout@v4
+    - name: Checkout repository
+      uses: actions/checkout@v4
 
-      # Install MSYS2 for a Unix-like build environment
-      - name: Install MSYS2
-        run: |
-          Invoke-WebRequest -Uri https://github.com/msys2/msys2-installer/releases/download/2023-07-18/msys2-base-x86_64-20230718.exe -OutFile msys2.exe
-          .\msys2.exe install --root C:\msys64 --confirm-command
-          C:\msys64\usr\bin\bash.exe -lc "pacman -S --noconfirm make autoconf git"
-        shell: powershell
+    - name: Set up Cygwin
+      uses: cygwin/cygwin-install-action@master
+      with:
+        packages: autoconf make unzip zip git
 
-      # Install x64 Boot JDK (OpenJDK 24 as an example)
-      - name: Install Boot JDK
-        run: |
-          Invoke-WebRequest -Uri https://download.java.net/java/GA/jdk24/36/jdk-24_windows-x64_bin.zip -OutFile jdk24.zip
-          Expand-Archive -Path jdk24.zip -DestinationPath C:\bootjdk
-          # Move contents up one level if extracted folder has a subfolder
-          Move-Item -Path C:\bootjdk\jdk-24\* -Destination C:\bootjdk\
-        shell: powershell
+    - name: Install Visual Studio with ARM64 tools
+      run: |
+        # Download and install Visual Studio Build Tools with ARM64 support
+        Invoke-WebRequest -Uri "https://aka.ms/vs/17/release/vs_buildtools.exe" -OutFile "vs_buildtools.exe"
+        Start-Process -Wait -FilePath "vs_buildtools.exe" -ArgumentList "--quiet --add Microsoft.VisualStudio.Workload.VCTools --add Microsoft.VisualStudio.Component.VC.Tools.ARM64 --add Microsoft.VisualStudio.Component.VC.CMake.Project --includeRecommended"
 
-      # Determine the latest stable OpenJDK version
-      - name: Get Latest OpenJDK Version
-        run: |
-          # Fetch tags from openjdk/jdk repository
-          $tags = gh api repos/openjdk/jdk/tags --paginate | ConvertFrom-Json
-          # Filter tags matching 'jdk-XX' (e.g., jdk-23, jdk-24)
-          $stableTags = $tags | Where-Object { $_.name -match '^jdk-(\d+)$' } | Select-Object -ExpandProperty name
-          # Extract version numbers and find the maximum
-          $versions = $stableTags | ForEach-Object { [int]($_.Substring(4)) }
-          $latestVersion = ($versions | Measure-Object -Maximum).Maximum
-          echo "LATEST_VERSION=$latestVersion" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-        shell: powershell
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    - name: Set up Boot JDK
+      run: |
+        # Download OpenJDK 24 for Windows x64 as the Boot JDK
+        Invoke-WebRequest -Uri "https://download.java.net/java/GA/jdk24/36/jdk-24_windows-x64_bin.zip" -OutFile "jdk-24.zip"
+        Expand-Archive -Path "jdk-24.zip" -DestinationPath "C:\Program Files (Arm)\Microsoft\jdk-24"
 
-      # Check if a release already exists for this version
-      - name: Check if Release Exists
-        id: check-release
-        run: |
-          $releases = gh release list --json tagName | ConvertFrom-Json
-          $exists = $releases | Where-Object { $_.tagName -eq "v$env:LATEST_VERSION" }
-          if ($exists) {
-            echo "Release v$env:LATEST_VERSION already exists. Skipping build."
-            echo "SKIP_BUILD=true" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          } else {
-            echo "No release found for v$env:LATEST_VERSION. Proceeding with build."
-            echo "SKIP_BUILD=false" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          }
-        shell: powershell
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    - name: Clone OpenJDK repository
+      run: |
+        git clone https://git.openjdk.org/jdk.git
+        cd jdk
+        # Get the latest stable release tag (e.g., jdk-23, jdk-24)
+        $latest_tag = (git tag --list 'jdk-*' | Sort-Object -Descending { [version]($_ -replace 'jdk-', '') } | Select-Object -First 1)
+        git checkout $latest_tag
 
-      # Clone OpenJDK repository and checkout the latest stable tag
-      - name: Clone OpenJDK
-        if: env.SKIP_BUILD == 'false'
-        run: |
-          git clone https://github.com/openjdk/jdk.git C:\workspace\jdk
-          cd C:\workspace\jdk
-          git checkout jdk-$env:LATEST_VERSION
-        shell: cmd
+    - name: Configure Visual Studio environment for ARM64
+      run: |
+        # Set up the ARM64 cross-compilation environment
+        cmd /c "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvarsall.bat" x64_arm64
 
-      # Build OpenJDK for Windows ARM64
-      - name: Build OpenJDK
-        if: env.SKIP_BUILD == 'false'
-        run: |
-          call "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvarsall.bat" arm64
-          set BOOT_JDK=C:\bootjdk
-          set PATH=%BOOT_JDK%\bin;%PATH%
-          cd C:\workspace\jdk
-          C:\msys64\usr\bin\bash.exe -c "./configure --with-boot-jdk=/c/bootjdk --openjdk-target=aarch64-w64-mingw32 && make images CONF=windows-aarch64-server-release"
-        shell: cmd
+    - name: Configure OpenJDK build
+      shell: bash
+      run: |
+        cd jdk
+        ./configure --with-boot-jdk="/cygdrive/c/Program Files (Arm)/Microsoft/jdk-24" --openjdk-target=aarch64-w64-mingw32
 
-      # Package the JDK binary
-      - name: Package JDK
-        if: env.SKIP_BUILD == 'false'
-        run: |
-          cd C:\workspace\jdk\build\windows-aarch64-server-release\images
-          powershell -Command "Compress-Archive -Path jdk -DestinationPath jdk-$env:LATEST_VERSION-windows-arm64.zip"
-        shell: cmd
+    - name: Build OpenJDK
+      run: |
+        cd jdk
+        make images CONF=windows-aarch64-server-release
 
-      # Create a GitHub release with the precompiled binary
-      - name: Create Release
-        if: env.SKIP_BUILD == 'false'
-        run: |
-          gh release create v$env:LATEST_VERSION `
-            -t "OpenJDK $env:LATEST_VERSION for Windows ARM64" `
-            -n "Precompiled OpenJDK $env:LATEST_VERSION for Windows ARM64" `
-            C:\workspace\jdk\build\windows-aarch64-server-release\images\jdk-$env:LATEST_VERSION-windows-arm64.zip
-        shell: powershell
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: openjdk-windows-arm64
+        path: jdk/build/windows-aarch64-server-release/images/jdk
