@@ -28,10 +28,10 @@ jobs:
         git clone https://git.openjdk.org/jdk.git
         cd jdk
         $tags = git tag --list 'jdk-*'
-        $stableTags = $tags | Where-Object { $_ -match 'jdk-(\d+)\+(\d+)' -and [int]$matches[1] -ge 23 }
+        $stableTags = $tags | Where-Object { $_ -match 'jdk-(\d+)\+(\d+)' -and [int]$matches[1] -ge 24 }
         $latestTag = $stableTags | Sort-Object -Descending { [version]($matches[1] + '.' + $matches[2]) } | Select-Object -First 1
         if (-not $latestTag) {
-          Write-Error "No stable tag found for OpenJDK 23 or later"
+          Write-Error "No stable tag found for OpenJDK 24 or later"
           exit 1
         }
         git checkout $latestTag
@@ -41,8 +41,8 @@ jobs:
     - name: Determine Boot JDK version
       run: |
         $bootJdkVersion = [int]$env:VERSION - 1
-        if ([int]$bootJdkVersion -lt 22) {
-          Write-Error "Boot JDK version ($bootJdkVersion) is less than 22, which is not supported"
+        if ([int]$bootJdkVersion -lt 23) {
+          Write-Error "Boot JDK version ($bootJdkVersion) is less than 23, which is not supported"
           exit 1
         }
         echo "BOOT_JDK_VERSION=$bootJdkVersion" >> $env:GITHUB_ENV
