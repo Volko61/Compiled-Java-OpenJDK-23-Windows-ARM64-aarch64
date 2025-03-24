@@ -28,12 +28,12 @@ jobs:
       run: |
         git clone https://git.openjdk.org/jdk.git
         cd jdk
-        # Get the latest stable release tag (e.g., jdk-24+36), filtering for version 23+
+        # Get the latest stable release tag (e.g., jdk-24+36), filtering for version 24+
         $tags = git tag --list 'jdk-*'
-        $stableTags = $tags | Where-Object { $_ -match 'jdk-(\d+)\+(\d+)' -and [int]$matches[1] -ge 23 }
+        $stableTags = $tags | Where-Object { $_ -match 'jdk-(\d+)\+(\d+)' -and [int]$matches[1] -ge 24 }
         $latestTag = $stableTags | Sort-Object -Descending { [version]($matches[1] + '.' + $matches[2]) } | Select-Object -First 1
         if (-not $latestTag) {
-          Write-Error "No stable tag found for OpenJDK 23 or later"
+          Write-Error "No stable tag found for OpenJDK 24 or later"
           exit 1
         }
         git checkout $latestTag
